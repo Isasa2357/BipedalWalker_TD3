@@ -48,6 +48,24 @@ class MultiplyScheduler(BaseScheduler):
         super().to(device)
         self._multiply.to(device)
 
+class LinearScheduler(BaseScheduler):
+    def __init__(self, step_size, start, end, device: torch.device):
+        min = start if (start > end) else end
+        max = end if (end > start) else end
+        super().__init__(min, max, device)
+
+        self.step_size = torch.tensor(step_size, dtype=torch.float32, device=device)
+    
+    def forward(self, val: torch.Tensor):
+        val += self.step_size
+        val = torch.min(val, self.max)
+        val = torch.max(val, self.min)
+        return val
+    
+    def to(self, device: torch.device):
+        super().to(device)
+        self.step_size.to(device)
+
 class ScalarParam:
     def __init__(self, start: float, scheduler: BaseScheduler, device: torch.device):
         self._device = device
@@ -78,4 +96,10 @@ def makeConstant(val: float, device: torch.device=torch.device("cpu")) -> Scalar
 def makeMultiply(val: float, multiply: float, min: float, max: float, device: torch.device=torch.device("cpu")):
     scheduler = MultiplyScheduler(multiply, min, max, device)
     param = ScalarParam(val, scheduler, device)
+    return param
+
+def makeLinear(start: float, end: float, total_step: int, device: torch.device=torch.device('cpu')):
+    step_size = (end - start) / total_step
+    scheduler = LinearScheduler(step_size, start, end, device)
+    param = ScalarParam(start, scheduler, device)
     return param

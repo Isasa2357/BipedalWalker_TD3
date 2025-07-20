@@ -95,7 +95,7 @@ class PERBuffer(ReplayBufferInterface):
 
         self._priorities = SamplingTree_pywapper(self._capacity)
 
-        self._indics4update = None
+        self._indics4update = np.empty(0)
     
     def add(self, state: ndarray, action: ndarray, reward: ndarray, next_state: ndarray, done: ndarray) -> None:
         # 優先度更新
@@ -111,6 +111,8 @@ class PERBuffer(ReplayBufferInterface):
         self._rewards[write_idx] = torch.tensor(reward, dtype=self._rewards.dtype, device=self._device)
         self._next_status[write_idx] = torch.tensor(next_state, dtype=self._next_status.dtype, device=self._device)
         self._dones[write_idx] = torch.tensor(done, dtype=self._dones.dtype, device=self._device)
+
+        self._real_size = min(self._real_size + 1, self._capacity)
 
     def get_sample(self, sample_size: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         priorities, indics = self._priorities.get_sample(sample_size)
@@ -134,29 +136,30 @@ class PERBuffer(ReplayBufferInterface):
         priority_total = self._priorities.total
 
         # 経験の選択確率を計算する
-        select_probs = [priority / priority_total for priority in priorities]
+        select_probs = priorities / priority_total
 
         # 重みの計算
-        weights = [(self.real_size * select_prob)**self._beta.value for select_prob in select_probs]
+        weights = (self.real_size * select_probs)**self._beta.value
 
         # 正規化
-        weights /= max(weights)
+        weights /= np.max(weights)
 
-        return torch.tensor(weights, device=self._device)
+        return torch.tensor(weights, device=self._device).unsqueeze(1)
 
-    def update(self, td_diffs: ndarray) -> None:
+    def update(self, td_diffs: torch.Tensor) -> None:
         '''
         優先度を更新する
         '''
-        if self._indics4update == None:
+        if self._indics4update.shape == (0,):
             raise RuntimeError("まだ，サンプリングが行われていません")
 
         # 優先度の計算
-        new_priorities = self._calc_priorities(td_diffs)
+        td_diffs = td_diffs.squeeze(1)
+        new_priorities = self._calc_priorities(td_diffs.detach().cpu().numpy())
 
         # 更新
         self._priorities.update(new_priorities, self._indics4update)
-        self._indics4update = None
+        self._indics4update = np.empty(0)
 
     def _calc_priorities(self, td_diffs: ndarray) -> ndarray:
         '''
